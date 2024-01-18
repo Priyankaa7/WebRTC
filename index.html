@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Audio Call</title>
+</head>
+<body>
+    <h1>WebRTC Audio Call</h1>
+    
+    <button id="startButton">Start Call</button>
+    <button id="endButton" disabled>End Call</button>
+
+    <div id="incomingCallModal" style="display: none;">
+        <div>
+            <p>Incoming Call</p>
+            <button id="acceptCallBtn">Accept</button>
+            <button id="rejectCallBtn">Reject</button>
+        </div>
+    </div>
+
+    <script>
+        const startButton = document.getElementById('startButton');
+        const endButton = document.getElementById('endButton');
+        const incomingCallModal = document.getElementById('incomingCallModal');
+        const acceptCallBtn = document.getElementById('acceptCallBtn');
+        const rejectCallBtn = document.getElementById('rejectCallBtn');
+        let localStream;
+        let peerConnection;
+        let ws;
+        let isCallInitiator = false;
+        const roomNumber = '123'; 
+
+        startButton.addEventListener('click', startCall);
+        endButton.addEventListener('click', endCall);
+
+        async function startCall() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                const localAudio = document.createElement('audio');
+                localAudio.srcObject = localStream;
+                localAudio.autoplay = true;
+                document.body.appendChild(localAudio);
+
+                peerConnection = new RTCPeerConnection();
+                localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+                peerConnection.onicecandidate = handleICECandidateEvent;
+
+                endButton.disabled = false;
+                startButton.disabled = true;
+
+                ws = new WebSocket('ws://localhost:3000');
+
+                await new Promise((resolve, reject) => {
+                    ws.addEventListener('open', () => {
+                        console.log('WebSocket connection opened successfully.');
+                        resolve();
+                    });
+
+                    ws.addEventListener('error', (error) => {
+                        console.error('WebSocket connection error:', error);
+                        reject(error);
+                    });
+                });
+
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                ws.send(JSON.stringify({ offer, roomNumber }));
+
+            } catch (error) {
+                console.error('Error starting call:', error);
+            }
+        }
+
+        function handleICECandidateEvent(event) {
+            if (event.candidate) {
+                ws.send(JSON.stringify({ iceCandidate: event.candidate, roomNumber }));
+            }
+        }
+
+        function endCall() {
+            ws.close();
+            peerConnection.close();
+            localStream.getTracks().forEach(track => track.stop());
+            document.body.removeChild(document.querySelector('audio'));
+            endButton.disabled = true;
+            startButton.disabled = false;
+        }
+
+        ws.addEventListener('message', (message) => {
+            const data = JSON.parse(message.data);
+            if (data.offer) {
+                handleIncomingCall(data.offer);
+            }
+        });
+
+        function handleIncomingCall(offer) {
+            incomingCallModal.style.display = 'block';
+            acceptCallBtn.onclick = function () {
+                incomingCallModal.style.display = 'none';
+                isCallInitiator = false;
+                createPeerConnection();
+                rtcPeerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                rtcPeerConnection.createAnswer()
+                    .then(desc => setLocalAndAnswer(desc))
+                    .catch(e => console.log(e));
+            };
+
+            rejectCallBtn.onclick = function () {
+                incomingCallModal.style.display = 'none';
+            };
+        }
+    </script>
+</body>
+</html>
